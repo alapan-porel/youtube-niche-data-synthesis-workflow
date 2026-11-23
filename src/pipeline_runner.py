@@ -26,13 +26,38 @@ import textwrap
 from tqdm import tqdm
 from datetime import datetime
 
-import yt_dlp
-import ollama
-import anthropic
-import whisper 
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+
+try:
+    import ollama
+except ImportError:
+    ollama = None
+
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
+
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    WhisperModel = None
+
+try:
+    import whisper
+except ImportError:
+    whisper = None
+
 import warnings
 warnings.filterwarnings("ignore")
-from googleapiclient.discovery import build
+
+try:
+    from googleapiclient.discovery import build
+except ImportError:
+    build = None
 
 # ============================================================
 # ======================== CONFIGURATION ======================
@@ -42,9 +67,18 @@ from googleapiclient.discovery import build
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "YOUR_YOUTUBE_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "YOUR_ANTHROPIC_API_KEY")
 
-print("⏳ Loading local Whisper model (this takes a moment)...")
-# "small" is a good balance of speed/quality. Use "base" if you have a slow CPU.
-local_whisper_model = whisper.load_model("base")
+_local_whisper_model = None
+
+def get_whisper_model(model_size: str = "base"):
+    global _local_whisper_model
+    if _local_whisper_model is None:
+        if WhisperModel is not None:
+            _local_whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        elif whisper is not None:
+            _local_whisper_model = whisper.load_model(model_size)
+        else:
+            raise RuntimeError("Neither faster-whisper nor whisper is installed.")
+    return _local_whisper_model
 
 # Verified Therapist Channels (Manually verified)
 CHANNEL_IDS = [
@@ -174,8 +208,24 @@ COST_REPORT = "cost_report.json"
 # ====================== INITIALIZE CLIENTS ===================
 # ============================================================
 
-youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+youtube = None
+claude = None
+
+def get_youtube_client():
+    global youtube
+    if youtube is None:
+        if build is None:
+            raise RuntimeError("google-api-python-client is not installed.")
+        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+    return youtube
+
+def get_claude_client():
+    global claude
+    if claude is None:
+        if anthropic is None:
+            raise RuntimeError("anthropic is not installed.")
+        claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    return claude
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -348,9 +398,15 @@ def download_and_transcribe(video_id):
         # 2. TRANSCRIBE: Turn ON verbose mode to see text
         print(f"📝 [Transcribing] {video_id} (This uses your CPU)...")
         try:
-            # verbose=True prints the text as it recognizes it!
-            result = local_whisper_model.transcribe(audio_path, verbose=True) 
-            transcript = result["text"].strip()
+            whisper_model = get_whisper_model()
+            res = whisper_model.transcribe(audio_path)
+            if isinstance(res, tuple):  # faster-whisper returns (segments, info)
+                segments, _ = res
+                transcript = " ".join(seg.text for seg in segments).strip()
+            elif isinstance(res, dict):  # openai-whisper returns dict
+                transcript = res.get("text", "").strip()
+            else:
+                transcript = str(res).strip()
             
             cost_tracker.costs["gemini_audio"] += 0.0 
             
@@ -626,7 +682,8 @@ Assistant: "That's a profound thing to notice about yourself. When did you first
 """
     
     try:
-        msg = claude.messages.create(
+        client = get_claude_client()
+        msg = client.messages.create(
             # CHANGED: Switched to Haiku (12x cheaper)
             model="claude-3-haiku-20240307", 
             max_tokens=3000,
@@ -832,7 +889,8 @@ def get_channel_videos(channel_id):
     
     try:
         # PATCH 3: YouTube Items Guard
-        channel_response = youtube.channels().list(
+        yt_client = get_youtube_client()
+        channel_response = yt_client.channels().list(
             id=channel_id,
             part="contentDetails"
         ).execute()
@@ -848,7 +906,7 @@ def get_channel_videos(channel_id):
         next_page_token = None
         
         while True:
-            playlist_response = youtube.playlistItems().list(
+            playlist_response = yt_client.playlistItems().list(
                 playlistId=uploads_playlist,
                 part="snippet",
                 maxResults=50,

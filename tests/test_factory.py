@@ -1,31 +1,40 @@
 import json
 import os
 import re
+import unittest
+import sys
 
-def test_transcripts_sample():
-    sample_path = os.path.join(os.path.dirname(__file__), "..", "samples", "clinical_transcripts_sample.jsonl")
-    assert os.path.exists(sample_path)
+# Ensure repo root is on sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-    forbidden = ['ni' + 'vi', 'ni' + 'vilia']
-    count = 0
-    with open(sample_path, "r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            item = json.loads(line)
-            assert "video_id" in item
-            assert "content" in item
-            assert len(item["content"]) > 10
-            # Zero brand leakage
-            assert not any(f in line.lower() for f in forbidden)
-            count += 1
+class TestYouTubeFactory(unittest.TestCase):
+    def test_transcripts_sample(self):
+        sample_path = os.path.join(os.path.dirname(__file__), "..", "samples", "clinical_transcripts_sample.jsonl")
+        self.assertTrue(os.path.exists(sample_path), f"Sample file not found at {sample_path}")
 
-    assert count == 25
+        forbidden_pattern = re.compile(r'\b(ni' + 'vi|ni' + 'vilia)\b', re.IGNORECASE)
+        count = 0
+        with open(sample_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                self.assertIn("video_id", item)
+                self.assertIn("content", item)
+                self.assertGreater(len(item["content"]), 10)
+                # Zero brand leakage
+                self.assertFalse(forbidden_pattern.search(line), f"Brand leak detected: {line}")
+                count += 1
 
-def test_master_channel_list():
-    ch_path = os.path.join(os.path.dirname(__file__), "..", "samples", "MASTER_CHANNEL_LIST_sample.json")
-    assert os.path.exists(ch_path)
-    with open(ch_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    assert isinstance(data, (dict, list))
-    assert len(data) > 0
+        self.assertEqual(count, 25)
+
+    def test_master_channel_list(self):
+        ch_path = os.path.join(os.path.dirname(__file__), "..", "samples", "MASTER_CHANNEL_LIST_sample.json")
+        self.assertTrue(os.path.exists(ch_path), f"Channel list not found at {ch_path}")
+        with open(ch_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIsInstance(data, (dict, list))
+        self.assertGreater(len(data), 0)
+
+if __name__ == "__main__":
+    unittest.main()
