@@ -1,0 +1,4 @@
+# Netscape HTTP Cookie File
+# Used by yt-dlp to access age-restricted or rate-limited YouTube streams.
+# Export cookies from browser using standard Netscape cookies extension.
+.youtube.com	TRUE	/	TRUE	1750000000	PREF	f4=4000000
